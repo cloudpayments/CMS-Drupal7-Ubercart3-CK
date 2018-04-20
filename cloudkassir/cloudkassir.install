@@ -1,0 +1,51 @@
+<?php
+/**
+ * Implements hook_schema().
+ */
+function cloudkassir_schema() {
+  $schema['cloudkassir_check'] = array(
+  'description' => 'CloudKassir check table.',
+    'fields' => array(
+      'id' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => "id",
+      ),
+      'order_id' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "Order id ",
+      ),
+      'type' => array(
+        'type' => 'text',
+        'size' => 'normal',
+        'description' => "Income|IncomeReturn",
+      ),
+      'time' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The Unix timestamp when sended.',
+      ),
+      'answer_received' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => '',
+      ),
+      'data' => array(
+        'type' => 'blob',
+        'not null' => FALSE,
+        'size' => 'big',
+        'description' => 'Serialized array of additional data',
+      ),
+    ),
+    'primary key' => array('id'),
+    'indexes' => array(
+      'order_id' => array('order_id'),
+    ),
+  );
+  return $schema;
+}

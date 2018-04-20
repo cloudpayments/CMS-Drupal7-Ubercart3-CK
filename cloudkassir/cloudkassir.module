@@ -1,0 +1,226 @@
+<?php
+require_once 'CloudpaymentsAPI.php';
+/**
+ * @return mixed
+ */
+function cloudkassir_menu()
+{
+    $items['cloudkassir/receipt'] = array(
+        'title' => 'Receipt',
+        'page callback' => 'cloudkassir_receipt',
+        'access callback' => TRUE,
+        'type' => MENU_CALLBACK,
+    );
+
+    $items['admin/store/orders/%uc_order/receipt'] = array(
+        'title' => 'Receipt',
+        'page callback' => 'cloudkassir_order_receipt',
+        'page arguments' => array(3),
+        'access arguments' => array('view all orders'),
+        'type' => MENU_LOCAL_TASK,
+        'weight' => 3,
+    );
+
+    // Config page
+    $items['admin/config/system/cloudkassir'] = array(
+        'title' => 'CloudKassir Настройки',
+        'description' => 'CloudKassir Настройки.',
+        'page callback' => 'drupal_get_form',
+        'page arguments' => array('cloudkassir_admin_settings'),
+        'access arguments' => array('access cloudkassir settings'),
+        'type' => MENU_NORMAL_ITEM,
+        'file' => 'cloudkassir.admin.inc',
+    );
+    return $items;
+}
+
+function cloudkassir_receipt()
+{
+    $iOrderId = (int)$_POST['InvoiceId'];
+    $oOrder = uc_order_load($iOrderId);
+    if (!$oOrder) exit('{"error":"order with InvoiceId '.$iOrderId.' not found"}');
+    $sType = $_POST['Type'];
+    if ($sType != 'Income' && $sType != 'IncomeReturn') exit('{"error":"unknown receipt type"}');
+    $iId = db_select('cloudkassir_check', 'cc')
+        ->fields('cc', ['id'])
+        ->condition('type', $sType)
+        ->condition('order_id', $iOrderId)
+        ->execute()->fetchField();
+    if ($iId) {
+        db_update('cloudkassir_check')
+            ->fields(['time' => time(), 'answer_received' => 1, 'data' => serialize($_POST)])
+            ->condition('id', $iId)->execute();
+    }
+    exit('{"code":0}');
+}
+
+function cloudkassir_order_receipt($oOrder)
+{
+    if (isset($_GET['outcome'])) {
+		$aWayPayment = variable_get('cloudkassir_ways_payment', []);
+		if ($oOrder && isset($oOrder->payment_method) && in_array($oOrder->payment_method, $aWayPayment)) {
+			SendReceipt($oOrder, 'IncomeReturn');
+		} else {
+			drupal_set_message('CloudPayments error: ' ,'Для этого способа оплаты не назначена выписка чеков' , 'error');
+		}
+    }
+    $result = db_query("SELECT * FROM {cloudkassir_check WHERE order_id = :id ", array(':id' => $oOrder->order_id));
+    $header = array( 'Дата', 'Тип', 'Ответ');
+    $rows = array();
+    $bSendOutcome = true;
+    foreach ($result as $check) {
+        $rows[] = array(
+            format_date($check->time, 'short'),
+            $check->type,
+            $check->answer_received,
+        );
+        if ($check->type == 'IncomeReturn') {
+            if ($check->answer_received || time() - $check->time < 120) {
+                $bSendOutcome = false;
+            }
+        }
+    }
+
+    $build['log'] = array(
+        '#theme' => 'table',
+        '#header' => $header,
+        '#rows' => $rows,
+        '#empty' => 'Нет чеков',
+    );
+
+    if ($bSendOutcome) {
+        $build['custom-form'] = array(
+            '#prefix' => '<a class="button" href="?outcome">',
+            '#suffix' => '</a>',
+            '#markup' => '<span>' . 'Отправить чек возврата' . '</span>',
+        );
+    }
+
+    return $build;
+}
+
+/**
+ * Implements hook_uc_order().
+ */
+function cloudkassir_uc_order($op, $oOrder, $arg2)
+{
+	switch ($op) {
+		case 'total':
+			// когда вызываются вебхуки
+			if ($oOrder) {
+				if ($oOrder->order_status == variable_get('cloudkassir_status_success')) {
+					$aWayPayment = variable_get('cloudkassir_ways_payment', []);
+					if ($oOrder && isset($oOrder->payment_method) && in_array($oOrder->payment_method, $aWayPayment)) {
+						SendReceipt($oOrder, 'Income');
+					}
+				}
+			}
+			break;
+	}
+}
+
+function SendReceipt($oOrder, $sType){
+    $oRow = db_select('cloudkassir_check', 'cc')
+        ->condition('cc.order_id', $oOrder->order_id)
+        ->condition('cc.type', $sType)
+        ->fields('cc', ['time', 'answer_received'])
+        ->execute()
+        ->fetch();
+    if ($oRow && $oRow->time && (time() - $oRow->time) < 120) return false; // если уже отправлен запрос системе на отправку чека
+    if ($oRow && $oRow->answer_received) return false;
+    $iTaxProduct = variable_get('cloudkassir_tax_product',-1);
+    $iTaxShipping = variable_get('cloudkassir_tax_shipping',-1);
+    $amount = 0;
+    $aItems = [];
+    foreach ($oOrder->products as $iId => $oProduct) {
+        if ($iTaxProduct == -2) {
+            // берем налог из товара
+            $iTax = 0;
+            foreach ($oOrder->line_items as $aData) {
+                if ($aData['type'] == 'tax') {
+                    $oTax = $aData['data']['tax'];
+                    if ($oTax->taxed_product_types[0] == 'product') {
+                        $iTax = $oTax->rate * 100;
+                        break;
+                    }
+                }
+            }
+        } elseif ($iTaxProduct == -1) {
+            $iTax = '';
+        } else {
+            $iTax = $iTaxProduct;
+        }
+
+        $aItem = [
+            "label" => $oProduct->title,
+            "price" => $oProduct->price * (1 + ($iTaxProduct == -2 ? $iTax / 100 : 0)),
+            "quantity" => $oProduct->qty,
+            "amount" => $oProduct->price * (1 + ($iTaxProduct == -2 ? $iTax / 100 : 0)) * $oProduct->qty,
+            "vat" => $iTax
+        ];
+
+        array_push($aItems, $aItem);
+        $amount += $aItem['amount'];
+    }
+    foreach($oOrder->line_items as $aData) {
+        if ($iTaxShipping == -2) {
+//			// берем налог из настроек
+            $iTax = 0;
+            foreach ($oOrder->line_items as $aD) {
+                if ($aD['type'] == 'tax') {
+                    $oTax = $aD['data']['tax'];
+                    if ($oTax->taxed_line_items[0] == 'shipping') {
+                        $iTax = $oTax->rate * 100;
+                        break;
+                    }
+                }
+            }
+        } elseif ($iTaxShipping == -1) {
+            $iTax = '';
+        } else {
+            $iTax = $iTaxShipping;
+        }
+//		pr($aData);
+        if ($aData['type'] == 'shipping') {
+            $aItem = array(
+                'label' => $aData['title'],
+                'price' => $aData['amount'] * (1 + ($iTaxShipping == -2 ? $iTax / 100 : 0)),
+                'quantity' => 1,
+                'amount' => $aData['amount'] * (1 + ($iTaxShipping == -2 ? $iTax / 100 : 0)),
+                'vat' =>$iTax,
+            );
+            array_push($aItems, $aItem);
+            $amount += $aItem['amount'];
+        }
+    }
+    $aData = [
+        'Inn' => variable_get('cloudkassir_inn'),
+        'InvoiceId' => $oOrder->order_id, //номер заказа, необязательный
+	    'AccountId' => $oOrder->primary_email,
+	    'Type' => $sType,
+        'CustomerReceipt' => [
+                'Items' => $aItems,
+                'taxationSystem' => variable_get('cloudkassir_tax_system',0),
+                'email' => $oOrder->primary_email,
+                'phone' => $oOrder->billing_phone
+        ]
+    ];
+    $oCloudPayments = new CloudPaymentsAPI();
+    $oCloudPayments->MakeRequest('kkt/receipt', $aData);
+    if (!$oRow) {
+        // создаем запись что отправили запрос.
+        db_insert('cloudkassir_check')->fields([
+            'order_id' => $oOrder->order_id,
+            'type' => $sType,
+            'time' => time()
+        ])->execute();
+    } else {
+        //
+        db_update('cloudkassir_check')->fields([
+            'time' => time()
+        ])
+            ->condition('order_id', $oOrder->order_id)
+            ->condition('type', $sType)
+            ->execute();
+    }
+}

@@ -1,0 +1,6 @@
+name = CloudKassir
+description = "CloudKassir module for Drupal Ubercart"
+package = CloudKassir
+core = 7.x
+version = 0.1.0
+configure = admin/config/system/cloudkassir
