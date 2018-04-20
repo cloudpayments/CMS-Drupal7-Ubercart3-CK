@@ -205,8 +205,8 @@ function SendReceipt($oOrder, $sType){
                 'phone' => $oOrder->billing_phone
         ]
     ];
-    $oCloudPayments = new CloudPaymentsAPI();
-    $oCloudPayments->MakeRequest('kkt/receipt', $aData);
+    $oCloudKassir = new CloudKassirAPI();
+	$oCloudKassir->MakeRequest('kkt/receipt', $aData);
     if (!$oRow) {
         // создаем запись что отправили запрос.
         db_insert('cloudkassir_check')->fields([
