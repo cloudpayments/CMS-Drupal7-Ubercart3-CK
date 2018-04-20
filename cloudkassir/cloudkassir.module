@@ -13,7 +13,7 @@ function cloudkassir_menu()
     );
 
     $items['admin/store/orders/%uc_order/receipt'] = array(
-        'title' => 'Receipt',
+        'title' => 'Чеки',
         'page callback' => 'cloudkassir_order_receipt',
         'page arguments' => array(3),
         'access arguments' => array('view all orders'),
