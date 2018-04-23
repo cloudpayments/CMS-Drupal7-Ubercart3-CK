@@ -1,5 +1,5 @@
 <?php
-require_once 'CloudpaymentsAPI.php';
+require_once 'CloudKassirAPI.php';
 /**
  * @return mixed
  */
