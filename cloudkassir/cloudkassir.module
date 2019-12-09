@@ -201,6 +201,7 @@ function SendReceipt($oOrder, $sType){
         'CustomerReceipt' => [
                 'Items' => $aItems,
                 'taxationSystem' => variable_get('cloudkassir_tax_system',0),
+                'calculationPlace'=>'www.'.$_SERVER['SERVER_NAME'],
                 'email' => $oOrder->primary_email,
                 'phone' => $oOrder->billing_phone
         ]
